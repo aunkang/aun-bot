@@ -3,6 +3,8 @@
 const line = require('@line/bot-sdk');
 const express = require('express');
 const config = require('./config.json');
+const fetch = require('node-fetch');
+
 
 // create LINE SDK client
 const client = new line.Client(config);
@@ -17,14 +19,14 @@ app.post('/webhook', line.middleware(config), (req, res) => {
   }
   // handle events separately
   Promise.all(req.body.events.map(event => {
-    console.log('event', event);
-    // check verify webhook event
-    if (event.replyToken === '00000000000000000000000000000000' ||
-      event.replyToken === 'ffffffffffffffffffffffffffffffff') {
-      return;
-    }
-    return handleEvent(event);
-  }))
+      console.log('event', event);
+      // check verify webhook event
+      if (event.replyToken === '00000000000000000000000000000000' ||
+        event.replyToken === 'ffffffffffffffffffffffffffffffff') {
+        return;
+      }
+      return handleEvent(event);
+    }))
     .then(() => res.end())
     .catch((err) => {
       console.error(err);
@@ -37,9 +39,30 @@ const replyText = (token, texts) => {
   texts = Array.isArray(texts) ? texts : [texts];
   return client.replyMessage(
     token,
-    texts.map((text) => ({ type: 'text', text }))
+    texts.map((text) => ({
+      type: 'text',
+      text
+    }))
   );
 };
+
+const replyMultiple = (token, payloads) => {
+  return client.replyMessage(
+    token,
+    payloads.reduce((result, each) => {
+      if (each.type == 'image') result = [...result, {
+        type: each.type,
+        originalContentUrl: each.payload,
+        previewImageUrl: each.payload
+      }]
+      else result = [...result, {
+        type: each.type,
+        text: each.payload
+      }]
+      return result
+    }, [])
+  )
+}
 
 // callback function to handle a single event
 function handleEvent(event) {
@@ -48,7 +71,7 @@ function handleEvent(event) {
       const message = event.message;
       switch (message.type) {
         case 'text':
-          return handleText(message, event.replyToken);
+          return handleText(message, event.replyToken, event.source.userId);
         case 'image':
           return handleImage(message, event.replyToken);
         case 'video':
@@ -88,12 +111,50 @@ function handleEvent(event) {
   }
 }
 
-function handleText(message, replyToken) {
-  return replyText(replyToken, message.text);
+function handleText(message, replyToken, userId) {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  // NODE_TLS_REJECT_UNAUTHORIZED = '0'
+  if (message.text == 'ฉันคือใคร') {
+    fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
+        method: 'GET',
+        rejectUnauthorized: false,
+        headers: {
+          Authorization: `Bearer ${config.channelAccessToken}`
+        }
+      }).then(res => {
+        return res.json()
+      }).then(profile => {
+        console.log(profile)
+        const replyMessage = [{
+            type: 'image',
+            payload: profile.pictureUrl
+          },
+          {
+            type: 'text',
+            payload: `name: ${profile.displayName}\nstatus: ${profile.statusMessage}`
+          }
+        ]
+        replyMultiple(replyToken, replyMessage)
+      })
+      .catch(err => console.log(err))
+  } else {
+    return replyText(replyToken, message.text);
+  }
 }
 
 function handleImage(message, replyToken) {
-  return replyText(replyToken, 'Got Image');
+  //return replyText(replyToken, 'Got Image');
+  // const imgSrc = "https://otviiisgrrr8.files.wordpress.com/2018/07/zuk.jpg"
+  app.use(express.static('public'))
+  const imgSrc = `https://89637d43.ngrok.io/webhook/imgs/mark.jpg`;
+  const response = [{
+    type: 'image',
+    originalContentUrl: imgSrc,
+    previewImageUrl: imgSrc
+  }]
+  client.replyMessage(replyToken, response).catch(
+    err => console.log(err)
+  )
 }
 
 function handleVideo(message, replyToken) {
@@ -109,7 +170,16 @@ function handleLocation(message, replyToken) {
 }
 
 function handleSticker(message, replyToken) {
-  return replyText(replyToken, 'Got Sticker');
+  // return replyText(replyToken, 'Got Sticker');
+  console.log(message)
+  const response = [{
+    "type": "sticker",
+    "packageId": "1",
+    "stickerId": "1"
+  }]
+  client.replyMessage(replyToken, response).catch(
+    err => console.log(err)
+  )
 }
 
 const port = config.port;
